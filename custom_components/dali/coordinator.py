@@ -6,8 +6,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
 import logging
-import math
-from typing import TYPE_CHECKING, Any, override
+from typing import Any, override
 
 from dali.address import (
     DeviceBroadcast,
@@ -98,7 +97,6 @@ from .const import (
     ISSUE_BUS_VOLTAGE_ERROR,
     ISSUE_UNADDRESSED_CONTROLDEVICE,
     ISSUE_UNADDRESSED_GEAR,
-    SUPPORTED_GEAR_DEVICE_TYPES,
     address_collision_issue_id,
     bus_overload_issue_id,
     bus_voltage_error_issue_id,
@@ -107,9 +105,14 @@ from .const import (
     unaddressed_gear_issue_id,
 )
 from .helpers import MASK_LEVEL
-
-if TYPE_CHECKING:
-    from . import DaliConfigEntry
+from .lifetime import (
+    BANK_4,
+    OPERATING_TIME_VALUES,
+    AgingRateLastMonth,
+    AgingRateLastYear,
+    CurrentAgingRate,
+    DriverHealth,
+)
 
 # LUBA "ADD DALI FRAME TO TX BUFFER" reason code for an unpowered bus.
 _BUS_VOLTAGE_ERROR_CODE = DriverLubaRs232.LubaTxError.BUS_VOLTAGE_ERROR.value
@@ -287,6 +290,23 @@ class DaliDiagnosticsData:
 
 
 @dataclass(frozen=True, slots=True)
+class DaliLifetimeData:
+    """Tridonic Lifetime Indicator data from memory bank 4.
+
+    A Tridonic driver models the ageing of its electrolytic capacitors and
+    recalculates these every five minutes. ``operating_time`` holds the hours
+    logged in each of the ``TEMPERATURE_RANGES`` control gear temperature
+    ranges, in the same order.
+    """
+
+    driver_health: float | None = None
+    current_aging_rate: float | None = None
+    aging_rate_last_month: float | None = None
+    aging_rate_last_year: float | None = None
+    operating_time: tuple[int | None, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class DaliEmergencyData:
     """Status and measurement data for one DT1 (IEC 62386-202) emergency gear.
 
@@ -381,6 +401,7 @@ class DaliGearData(DaliDeviceData):
     luminaire: DaliLuminaireData | None = None
     maintenance: DaliMaintenanceData | None = None
     diagnostics: DaliDiagnosticsData | None = None
+    lifetime: DaliLifetimeData | None = None
     active_energy: float | None = None
 
 
@@ -414,6 +435,9 @@ class DaliMetadataStore(Store[dict[str, Any]]):
         return {}
 
 
+type DaliConfigEntry = ConfigEntry[DaliCoordinator]
+
+
 class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
     """Coordinate DALI gear discovery and state updates."""
 
@@ -444,6 +468,7 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
         self._luminaire: dict[int, DaliLuminaireData] = {}
         self._maintenance: dict[int, DaliMaintenanceData] = {}
         self._diagnostics: dict[int, DaliDiagnosticsData] = {}
+        self._lifetime: dict[int, DaliLifetimeData] = {}
         self._energy: dict[int, float] = {}
         self._gear_config: dict[int, DaliGearConfig] = {}
         self.input_devices: dict[tuple[int, int], DaliGeneralSensorData] = {}
@@ -658,15 +683,7 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
             # unavailable and leave the collision to the dedicated repair.
             if present.raw_value is not None and present.raw_value.error:
                 return None
-            device_types = tuple(
-                device_type
-                for device_type in await self.driver.send(
-                    QueryDeviceTypes(gear_address)
-                )
-                if device_type in SUPPORTED_GEAR_DEVICE_TYPES
-            )
-            if not device_types:
-                return None
+            device_types = await self._query_device_types(gear_address)
             level = await self.driver.send(QueryActualLevel(gear_address))
             config = self._gear_config.get(address)
             if config is None or refresh_config:
@@ -675,11 +692,12 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
             linear_dimming = False
             if DEVICE_TYPE_LED in device_types:
                 curve = await self.driver.send(QueryDimmingCurve(gear_address))
-                linear_dimming = (
-                    curve is not None
-                    and curve.raw_value is not None
-                    and curve.raw_value.as_integer == 1
-                )
+                if curve is None or curve.raw_value is None:
+                    # A dropped dimming-curve reply would otherwise default to
+                    # the logarithmic curve and flip a linear gear's brightness;
+                    # treat it as a miss so the known-gear retry re-reads it.
+                    return None
+                linear_dimming = curve.raw_value.as_integer == 1
             supports_color_temperature = False
             supports_xy = False
             color_type_tc_active = None
@@ -766,9 +784,7 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
             metadata = DaliDeviceData()
 
         return DaliGearData(
-            level=_dali_level_to_brightness(
-                _response_value(level), linear_dimming, config.min_level
-            ),
+            level=_dali_level_to_brightness(_response_value(level), linear_dimming),
             min_level=config.min_level,
             max_level=config.max_level,
             system_failure_level=config.system_failure_level,
@@ -789,6 +805,7 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
             luminaire=self._luminaire.get(address),
             maintenance=self._maintenance.get(address),
             diagnostics=self._diagnostics.get(address),
+            lifetime=self._lifetime.get(address),
             active_energy=self._energy.get(address),
             gtin=metadata.gtin,
             identification_number=metadata.identification_number,
@@ -798,6 +815,20 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
             hardware_version=metadata.hardware_version,
             last_memory_bank=metadata.last_memory_bank,
         )
+
+    async def _query_device_types(self, gear_address: GearShort) -> tuple[int, ...]:
+        """Return the IEC 62386 part 2xx device types a control gear implements.
+
+        Gear built to the 2009 edition answers MASK when it implements several
+        of them, but has no QueryNextDeviceType to enumerate them with, which
+        the library reports as a sequence error. Its extensions are then simply
+        unknown, which is not the same as the gear being absent: it still dims
+        over part 102.
+        """
+        try:
+            return tuple(await self.driver.send(QueryDeviceTypes(gear_address)))
+        except DALISequenceError:
+            return ()
 
     async def _query_gear_config(self, gear_address: GearShort) -> DaliGearConfig:
         """Read the IEC 62386-102 configuration variables of one control gear."""
@@ -1158,6 +1189,52 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
             ),
         )
 
+    def _is_tridonic(self, address: int) -> bool:
+        """Return whether a control gear reports a Tridonic GTIN."""
+        gtin = self._metadata.get(address, DaliDeviceData()).gtin
+        return gtin is not None and str(gtin).startswith(TRIDONIC_GTIN_PREFIX)
+
+    async def _query_lifetime(
+        self, address: int, gear_address: GearShort
+    ) -> DaliLifetimeData | None:
+        """Read the Tridonic Lifetime Indicator values from memory bank 4.
+
+        Bank 4 is manufacturer-specific, so it is only read from gear whose
+        GTIN is Tridonic's; another manufacturer's bank 4 holds something else
+        entirely. Tridonic gear predating the Lifetime Indicator implements the
+        bank without those locations, and gives nothing back here.
+        """
+        if not self._is_tridonic(address) or not self._implements_bank(address, 4):
+            return None
+        values = await self._read_bank(BANK_4, gear_address)
+        if values is None:
+            return None
+        driver_health = _memory_float(values.get(DriverHealth))
+        current_aging_rate = _memory_float(values.get(CurrentAgingRate))
+        aging_rate_last_month = _memory_float(values.get(AgingRateLastMonth))
+        aging_rate_last_year = _memory_float(values.get(AgingRateLastYear))
+        operating_time = tuple(
+            _memory_int(values.get(value)) for value in OPERATING_TIME_VALUES
+        )
+        if all(
+            value is None
+            for value in (
+                driver_health,
+                current_aging_rate,
+                aging_rate_last_month,
+                aging_rate_last_year,
+                *operating_time,
+            )
+        ):
+            return None
+        return DaliLifetimeData(
+            driver_health=driver_health,
+            current_aging_rate=current_aging_rate,
+            aging_rate_last_month=aging_rate_last_month,
+            aging_rate_last_year=aging_rate_last_year,
+            operating_time=operating_time,
+        )
+
     async def _query_general_sensor(
         self, address: DeviceShort, instance: int
     ) -> DaliGeneralSensorData:
@@ -1368,10 +1445,15 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
                 diagnostics := await self._query_gear_diagnostics(address, gear_address)
             ) is not None:
                 self._diagnostics[address] = diagnostics
+            if (
+                lifetime := await self._query_lifetime(address, gear_address)
+            ) is not None:
+                self._lifetime[address] = lifetime
         return {
             address: replace(
                 gear,
                 diagnostics=self._diagnostics.get(address),
+                lifetime=self._lifetime.get(address),
                 active_energy=self._energy.get(address),
             )
             for address, gear in data.items()
@@ -1454,6 +1536,11 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
         self._diagnostics = {
             address: diagnostics
             for address, diagnostics in self._diagnostics.items()
+            if address in data
+        }
+        self._lifetime = {
+            address: lifetime
+            for address, lifetime in self._lifetime.items()
             if address in data
         }
         self._energy = {
@@ -1841,19 +1928,21 @@ def _instance_type_label(instance_type: int) -> str:
     return f"{name} (IEC 62386-{300 + instance_type})"
 
 
-def _dali_level_to_brightness(
-    level: object, linear_dimming: bool, min_level: int
-) -> int | None:
-    """Convert a DALI arc-power level to Home Assistant brightness."""
+def _dali_level_to_brightness(level: object, linear_dimming: bool) -> int | None:
+    """Convert a DALI arc-power level to Home Assistant brightness.
+
+    The curve depends only on the level and dimming type (IEC 62386-207); the
+    configured minimum level clamps commands, it does not rescale the readback.
+    """
     if not isinstance(level, int) or level >= 255:
         return None
     if level <= 0:
         return 0
-    if level <= min_level:
-        return 1
+    if level >= 254:
+        return 255
     if linear_dimming:
-        return round(1 + (level - min_level) * 254 / (254 - min_level))
-    return round(255 * 10 ** (((level - 254) * 3) / 253))
+        return round(1 + (level - 1) * 254 / 253)
+    return max(1, round(255 * 10 ** (((level - 254) * 3) / 253)))
 
 
 def _brightness_to_dali_level(
@@ -1863,26 +1952,16 @@ def _brightness_to_dali_level(
 
     The DALI level axis is coarser than the 1-255 brightness axis, so rounding
     each direction independently makes a set level read back as a different
-    brightness and the UI slider jumps. The level is therefore snapped to the
-    one that ``_dali_level_to_brightness`` maps back closest to the requested
-    brightness, keeping set-then-read stable wherever a matching level exists.
+    brightness and the UI slider jumps. The lowest level whose readback is
+    closest to the request is chosen instead, making the mapping a stable right
+    inverse of the readback: every reported brightness maps back to the level it
+    came from, regardless of the gear's minimum level.
     """
-    if linear_dimming:
-        analytic = min_level + (brightness - 1) * (254 - min_level) / 254
-    elif brightness < 255:
-        analytic = 254 + 253 * math.log10(brightness / 255) / 3
-    else:
-        analytic = 254
-    base = max(min_level, min(round(analytic), 254))
-    candidates = range(max(min_level, base - 2), min(254, base + 2) + 1)
     return min(
-        candidates,
+        range(min_level, 255),
         key=lambda level: (
-            abs(
-                (_dali_level_to_brightness(level, linear_dimming, min_level) or 0)
-                - brightness
-            ),
-            abs(level - base),
+            abs((_dali_level_to_brightness(level, linear_dimming) or 0) - brightness),
+            level,
         ),
     )
 
@@ -1968,9 +2047,9 @@ def _firmware_version(version: object, gtin: object) -> str | None:
     """Return the firmware version, in Tridonic's format on Tridonic units.
 
     The library renders the two version bytes as "<first>.<second>", but on
-    Tridonic gear the first byte packs the major and minor version the way IEC
-    62386-102 packs a single-byte version, and the second byte is the build
-    number, giving "<major>.<minor>-<build>".
+    Tridonic gear the first byte holds the major version in its high nibble and
+    the minor version in its low nibble, and the second byte is a three-digit
+    build number, giving "<major>.<minor>-<build>".
     """
     if not isinstance(version, str):
         return None
@@ -1980,7 +2059,7 @@ def _firmware_version(version: object, gtin: object) -> str | None:
     if not first.isdigit() or not second.isdigit():
         return version
     packed = int(first)
-    return f"{packed >> 2}.{packed & 0x03}-{second}"
+    return f"{packed >> 4}.{packed & 0x0F}-{int(second):03d}"
 
 
 def _level_or_mask(response: object) -> int | None:

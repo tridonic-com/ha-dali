@@ -1,7 +1,7 @@
 {
   "domain": "dali",
   "name": "Tridonic DALI",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "categories": [
     "lighting.lighting_systems",
     "hubs_protocols.building_automation"
@@ -19,7 +19,7 @@
   "quality_scale": "gold",
   "requirements": [
     "python-dali==0.16",
-    "serialx>=1.11.0"
+    "serialx==1.15.1"
   ],
   "usb": [
     {
