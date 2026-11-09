@@ -1,7 +1,6 @@
 {
   "domain": "dali",
   "name": "Tridonic DALI",
-  "version": "0.3.0",
   "categories": [
     "lighting.lighting_systems",
     "hubs_protocols.building_automation"
@@ -13,18 +12,20 @@
   "dependencies": [
     "usb"
   ],
-  "documentation": "https://www.home-assistant.io/integrations/dali",
+  "documentation": "https://github.com/tridonic-com/hacs-dali",
   "integration_type": "hub",
   "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/tridonic-com/hacs-dali/issues",
   "quality_scale": "gold",
   "requirements": [
     "python-dali==0.16",
-    "serialx==1.15.1"
+    "serialx>=1.15.1"
   ],
   "usb": [
     {
       "pid": "0201",
       "vid": "17B5"
     }
-  ]
+  ],
+  "version": "0.3.0"
 }
