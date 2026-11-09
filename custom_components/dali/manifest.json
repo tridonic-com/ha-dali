@@ -13,14 +13,14 @@
   "dependencies": [
     "usb"
   ],
-  "documentation": "https://www.home-assistant.io/integrations/dali",
+  "documentation": "https://github.com/tridonic-com/hacs-dali",
   "issue_tracker": "https://github.com/tridonic-com/hacs-dali/issues",
   "integration_type": "hub",
   "iot_class": "local_polling",
   "quality_scale": "gold",
   "requirements": [
     "python-dali==0.16",
-    "serialx==1.15.1"
+    "serialx>=1.15.1"
   ],
   "usb": [
     {
