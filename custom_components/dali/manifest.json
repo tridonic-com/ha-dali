@@ -12,10 +12,10 @@
   "dependencies": [
     "usb"
   ],
-  "documentation": "https://github.com/tridonic-com/hacs-dali",
+  "documentation": "https://github.com/tridonic-com/ha-dali",
   "integration_type": "hub",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/tridonic-com/hacs-dali/issues",
+  "issue_tracker": "https://github.com/tridonic-com/ha-dali/issues",
   "quality_scale": "gold",
   "requirements": [
     "python-dali==0.16",
