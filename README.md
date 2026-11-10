@@ -24,14 +24,19 @@ Lunatone DALI2-USB dongle (USB `17B5:0201`).
 
 ## Install
 
-1. Add the repository to HACS, either with the button below or manually via
-   **HACS → Integrations → three-dot menu → Custom repositories** (add this
-   repository's URL with category **Integration**):
+This integration is in the HACS default store.
 
-   [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tridonic-com&repository=ha-dali&category=integration)
-2. Find **Tridonic DALI** in HACS, install it, then **restart Home Assistant**.
-3. Plug in the DALI-USB dongle. Go to **Settings → Devices & Services → Add
+1. In HACS, search for **Tridonic DALI**, install it, then **restart Home
+   Assistant**.
+2. Plug in the DALI-USB dongle. Go to **Settings → Devices & Services → Add
    Integration → Tridonic DALI** and follow the config flow.
+
+If it does not appear yet, add it as a custom repository as a fallback — open
+**HACS → Integrations → three-dot menu → Custom repositories**, add this
+repository's URL with category **Integration** (or use the button below), then
+install as above:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tridonic-com&repository=ha-dali&category=integration)
 
 On first setup Home Assistant installs the released
 [`python-dali`](https://pypi.org/project/python-dali/) dependency from PyPI via
