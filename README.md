@@ -1,6 +1,6 @@
 <img src="icon.png" alt="Tridonic DALI" width="128" align="right" />
 
-# Tridonic DALI — HACS test distribution
+# Tridonic DALI
 
 [![HACS](https://github.com/tridonic-com/ha-dali/actions/workflows/hacs.yml/badge.svg)](https://github.com/tridonic-com/ha-dali/actions/workflows/hacs.yml)
 [![Hassfest](https://github.com/tridonic-com/ha-dali/actions/workflows/hassfest.yml/badge.svg)](https://github.com/tridonic-com/ha-dali/actions/workflows/hassfest.yml)
@@ -18,23 +18,25 @@ Lunatone DALI2-USB dongle (USB `17B5:0201`).
 ## Requirements
 
 - A running Home Assistant instance (OS, Container, or Supervised recommended).
-- [HACS](https://hacs.xyz) installed.
+- The Home Assistant Marketplace ([HACS](https://hacs.xyz)), available under
+  **Settings > Marketplace**.
 - Network access on the Home Assistant host (first setup installs `python-dali`
   from PyPI via pip).
 
 ## Install
 
-This integration is in the HACS default store.
+This integration is available in the Home Assistant Marketplace
+(**Settings > Marketplace**).
 
-1. In HACS, search for **Tridonic DALI**, install it, then **restart Home
-   Assistant**.
+1. In **Settings > Marketplace**, search for **Tridonic DALI**, install it, then
+   **restart Home Assistant**.
 2. Plug in the DALI-USB dongle. Go to **Settings → Devices & Services → Add
    Integration → Tridonic DALI** and follow the config flow.
 
-If it does not appear yet, add it as a custom repository as a fallback — open
-**HACS → Integrations → three-dot menu → Custom repositories**, add this
-repository's URL with category **Integration** (or use the button below), then
-install as above:
+If it does not appear yet, add it as a custom repository as a fallback — in
+**Settings > Marketplace**, open the three-dot menu → **Custom repositories**,
+add this repository's URL with category **Integration** (or use the button
+below), then install as above:
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tridonic-com&repository=ha-dali&category=integration)
 
@@ -58,10 +60,12 @@ python scripts/sync.py                 # uses ../core, keeps the current version
 python scripts/sync.py --version 0.2.0 # bump the integration version
 ```
 
-The sync makes exactly one change to the manifest versus core: it adds a
-`version` field (required for custom integrations). The `python-dali==0.16`
-PyPI pin is copied verbatim now that the release is published. Translations
+Versus the core manifest, the sync applies the changes a HACS custom
+integration needs: it adds a `version` field, points `documentation` and
+`issue_tracker` at this GitHub repo (hassfest rejects the home-assistant.io URL
+for custom integrations), and loosens the `serialx` pin to `>=` (Home Assistant
+ships it). The `python-dali==0.16` PyPI pin is copied verbatim. Translations
 (`translations/en.json`) are generated in the core checkout
 (`python3 -m script.translations develop --integration dali`) before syncing,
 since core does not commit them. After syncing, commit, tag with the matching
-version, and push to the GitHub remote so HACS picks up the release.
+version, and push to the GitHub remote so the Marketplace picks up the release.
