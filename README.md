@@ -1,4 +1,4 @@
-<img src="icon.png" alt="Tridonic DALI" width="128" align="right" />
+<img src="https://raw.githubusercontent.com/tridonic-com/ha-dali/main/icon.png" alt="Tridonic DALI" width="128" align="right" />
 
 # Tridonic DALI
 
