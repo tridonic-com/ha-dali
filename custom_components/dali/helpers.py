@@ -6,11 +6,24 @@ These helpers translate between those encodings and the values the entities
 present, and build the DTR0 write sequence shared by both config platforms.
 """
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from typing import TypeVar, cast
 
 from dali.address import GearShort
 from dali.command import Command, Response
 from dali.gear.general import DTR0
+from dali.sequences import DALISequence, progress
+from dalidrivers.typed.hid import tridonic
+from dalidrivers.typed.serial import DriverLubaRs232
+
+from .const import AddressableGearCommand
+
+_T = TypeVar("_T")
+
+# A connected DALI driver, regardless of the USB interface behind it. Both
+# typed drivers share the connect()/send()/new_dali_rx_queue()/close()
+# interface the coordinator relies on.
+type DaliDriver = DriverLubaRs232 | tridonic
 
 # fadeTime = 0.5 * sqrt(2 ** code) seconds. Code 0 selects the extended fade
 # time instead. The values are tabulated rather than computed because IEC
@@ -107,7 +120,7 @@ def encode_extended_fade_time(seconds: float) -> int:
 
 
 def set_dtr0_variable(
-    command: type[Command], address: GearShort, value: int
+    command: AddressableGearCommand, address: GearShort, value: int
 ) -> Generator[Command, Response | None]:
     """Create the sequence that writes a DTR0-sourced configuration variable.
 
@@ -117,3 +130,21 @@ def set_dtr0_variable(
     """
     yield DTR0(value)
     yield command(address)
+
+
+async def run_sequence(
+    driver: DaliDriver,
+    sequence: DALISequence[_T],
+    *,
+    on_progress: Callable[[str | progress], None] | None = None,
+) -> _T:
+    """Run a DALI sequence as a single transaction and return its result.
+
+    ``DriverLubaRs232.send`` is annotated to return ``Any``; this wrapper
+    restores the sequence's declared return type for its callers.
+    """
+    if on_progress is None:
+        result = await driver.send(sequence)
+    else:
+        result = await driver.send(sequence, progress=on_progress)
+    return cast("_T", result)

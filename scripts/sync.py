@@ -17,8 +17,25 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DST = REPO_ROOT / "custom_components" / "dali"
+# Brand assets live in the separate home-assistant/brands repo, not in core, so
+# the rmtree+copytree below leaves none behind; copy_brand() restores them here.
+BRAND_DST = DST / "brand"
 
 DEFAULT_VERSION = "0.3.2"
+
+# Where the DALI brand images sit inside a brands checkout, most specific first.
+BRAND_SUBDIRS = ("core_integrations/dali", "custom_integrations/dali")
+# Brand image filenames to mirror when present (icon/logo, light and dark).
+BRAND_FILES = (
+    "icon.png",
+    "icon@2x.png",
+    "logo.png",
+    "logo@2x.png",
+    "dark_icon.png",
+    "dark_icon@2x.png",
+    "dark_logo.png",
+    "dark_logo@2x.png",
+)
 
 GITHUB_REPO = "tridonic-com/ha-dali"
 
@@ -80,6 +97,33 @@ def patch_manifest(path: Path, version: str) -> None:
     )
 
 
+def copy_brand(brands_path: Path) -> int:
+    """Copy the DALI brand images from the brands repo into ``brand/``.
+
+    Core ships no brand assets (they live in the separate home-assistant/brands
+    repo), so the copytree from core leaves none behind. Mirror whatever brand
+    images exist for the DALI domain into ``custom_components/dali/brand/`` so the
+    custom integration ships them in-repo. Returns the number of files copied.
+    """
+    source = next(
+        (brands_path / sub for sub in BRAND_SUBDIRS if (brands_path / sub).is_dir()),
+        None,
+    )
+    if source is None:
+        raise SystemExit(
+            f"DALI brand assets not found under {brands_path} "
+            f"({' or '.join(BRAND_SUBDIRS)}); pass --brands-path or --skip-brands."
+        )
+
+    BRAND_DST.mkdir(parents=True, exist_ok=True)
+    copied = [name for name in BRAND_FILES if (source / name).is_file()]
+    for name in copied:
+        shutil.copy2(source / name, BRAND_DST / name)
+    if not copied:
+        raise SystemExit(f"No brand images found in {source}")
+    return len(copied)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -93,6 +137,17 @@ def main() -> None:
         default=None,
         help="Integration version for the manifest (default: keep existing or "
         f"{DEFAULT_VERSION}).",
+    )
+    parser.add_argument(
+        "--brands-path",
+        type=Path,
+        default=REPO_ROOT.parent / "brands",
+        help="Path to the home-assistant/brands checkout (default: ../brands).",
+    )
+    parser.add_argument(
+        "--skip-brands",
+        action="store_true",
+        help="Do not copy brand images (leaves the brand/ folder absent).",
     )
     args = parser.parse_args()
 
@@ -119,6 +174,11 @@ def main() -> None:
 
     print(f"Synced {src} -> {DST}")
     print(f"  version: {version}")
+    if args.skip_brands:
+        print("  brand assets: skipped")
+    else:
+        count = copy_brand(args.brands_path)
+        print(f"  brand assets: {count} file(s) from {args.brands_path}")
     print("Remember to bump the version and cut a matching release tag.")
 
 
