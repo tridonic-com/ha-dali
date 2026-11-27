@@ -32,7 +32,6 @@ from dali.device.general_sensor import (
     QueryMeasurementVariable,
 )
 from dali.device.sequences import Commissioning as CommissionDevices
-from dali.driver.serial import DriverLubaRs232
 from dali.exceptions import (
     DALISequenceError,
     MemoryLocationNotImplemented,
@@ -58,6 +57,8 @@ from dali.gear.general import (
 )
 from dali.gear.led import QueryDimmingCurve
 from dali.gear.sequences import (
+    Commissioning,
+    QueryDeviceTypes,
     QueryDT8ColourValue,
     QueryEmergencyFailureStatusResponse,
     QueryEmergencyFeaturesResponse,
@@ -74,24 +75,27 @@ from dali.memory import (
     oem,
 )
 from dali.memory.location import FlagValue, MemoryBank, MemoryValue
-from dali.sequences import Commissioning, QueryDeviceTypes, progress
+from dali.sequences import progress
+from dalidrivers.typed.serial import DriverLubaRs232
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.storage import Store
-from homeassistant.helpers.typing import UNDEFINED
+from homeassistant.helpers.typing import Undefined
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
     CONF_BUS_POWER,
+    CONF_INTERFACE,
     DEVICE_INSTANCE_TYPE_NAMES,
     DEVICE_TYPE_COLOUR,
     DEVICE_TYPE_EMERGENCY,
     DEVICE_TYPE_LED,
     DOMAIN,
     GEAR_DEVICE_TYPE_NAMES,
+    INTERFACE_HID,
     ISSUE_ADDRESS_COLLISION,
     ISSUE_BUS_OVERLOAD,
     ISSUE_BUS_VOLTAGE_ERROR,
@@ -104,7 +108,7 @@ from .const import (
     unaddressed_control_device_issue_id,
     unaddressed_gear_issue_id,
 )
-from .helpers import MASK_LEVEL
+from .helpers import MASK_LEVEL, DaliDriver, run_sequence
 from .lifetime import (
     BANK_4,
     OPERATING_TIME_VALUES,
@@ -353,9 +357,12 @@ class DaliEmergencyData:
         maintained gear keeps the lamp lit from the mains and so behaves as a
         dimmable light, whereas a non-maintained gear only lights in emergency.
         """
-        return self.features is not None and (
-            self.features.maintained_control_gear
-            or self.features.switched_maintained_control_gear
+        return bool(
+            self.features is not None
+            and (
+                self.features.maintained_control_gear
+                or self.features.switched_maintained_control_gear
+            )
         )
 
 
@@ -446,7 +453,7 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
     def __init__(
         self,
         hass: HomeAssistant,
-        driver: DriverLubaRs232,
+        driver: DaliDriver,
         config_entry: DaliConfigEntry,
     ) -> None:
         """Initialize the coordinator."""
@@ -555,21 +562,21 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
             return
         device_registry.async_update_device(
             device.id,
-            model_id=str(metadata.gtin) if metadata.gtin is not None else UNDEFINED,
+            model_id=str(metadata.gtin) if metadata.gtin is not None else Undefined,
             serial_number=(
                 serial_number
                 if (serial_number := _registry_serial_number(metadata)) is not None
-                else UNDEFINED
+                else Undefined
             ),
             sw_version=(
                 metadata.firmware_version
                 if metadata.firmware_version is not None
-                else UNDEFINED
+                else Undefined
             ),
             hw_version=(
                 metadata.hardware_version
                 if metadata.hardware_version is not None
-                else UNDEFINED
+                else Undefined
             ),
         )
 
@@ -717,49 +724,56 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
                             status.colour_type_colour_temperature_Tc_active == 1
                         )
                 if supports_color_temperature:
-                    color_temp_mired = await self.driver.send(
+                    color_temp_mired = await run_sequence(
+                        self.driver,
                         QueryDT8ColourValue(
                             gear_address, QueryColourValueDTR.ColourTemperatureTC
-                        )
+                        ),
                     )
                     # The gear only accepts values within its configured Tc
                     # limits; fall back to the physical limits when unset.
-                    color_temp_min_mired = await self.driver.send(
+                    color_temp_min_mired = await run_sequence(
+                        self.driver,
                         QueryDT8ColourValue(
                             gear_address,
                             QueryColourValueDTR.ColourTemperatureTcCoolest,
-                        )
+                        ),
                     )
                     if color_temp_min_mired is None:
-                        color_temp_min_mired = await self.driver.send(
+                        color_temp_min_mired = await run_sequence(
+                            self.driver,
                             QueryDT8ColourValue(
                                 gear_address,
                                 QueryColourValueDTR.ColourTemperatureTcPhysicalCoolest,
-                            )
+                            ),
                         )
-                    color_temp_max_mired = await self.driver.send(
+                    color_temp_max_mired = await run_sequence(
+                        self.driver,
                         QueryDT8ColourValue(
                             gear_address,
                             QueryColourValueDTR.ColourTemperatureTcWarmest,
-                        )
+                        ),
                     )
                     if color_temp_max_mired is None:
-                        color_temp_max_mired = await self.driver.send(
+                        color_temp_max_mired = await run_sequence(
+                            self.driver,
                             QueryDT8ColourValue(
                                 gear_address,
                                 QueryColourValueDTR.ColourTemperatureTcPhysicalWarmest,
-                            )
+                            ),
                         )
                 if supports_xy:
-                    x = await self.driver.send(
+                    x = await run_sequence(
+                        self.driver,
                         QueryDT8ColourValue(
                             gear_address, QueryColourValueDTR.XCoordinate
-                        )
+                        ),
                     )
-                    y = await self.driver.send(
+                    y = await run_sequence(
+                        self.driver,
                         QueryDT8ColourValue(
                             gear_address, QueryColourValueDTR.YCoordinate
-                        )
+                        ),
                     )
                     if isinstance(x, int) and isinstance(y, int):
                         xy_color = (x / 65535, y / 65535)
@@ -826,7 +840,9 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
         over part 102.
         """
         try:
-            return tuple(await self.driver.send(QueryDeviceTypes(gear_address)))
+            return tuple(
+                await run_sequence(self.driver, QueryDeviceTypes(gear_address))
+            )
         except DALISequenceError:
             return ()
 
@@ -873,12 +889,12 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
         read entirely so the initial refresh is not held up by it; the periodic
         refresh fills the diagnostics in afterwards.
         """
-        info_ = await self.driver.send(QueryEmergencyInformation(gear_address))
+        info_ = await run_sequence(self.driver, QueryEmergencyInformation(gear_address))
         memory: dict[type, Any] = {}
         if not fast:
             try:
-                memory = await self.driver.send(
-                    emergency.BANK_208.read_all(gear_address)
+                memory = await run_sequence(
+                    self.driver, emergency.BANK_208.read_all(gear_address)
                 )
             except DALISequenceError, MemoryLocationNotImplemented, ResponseError:
                 memory = {}
@@ -888,12 +904,12 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
             features=info_.emergency_features,
             failure_status=info_.emergency_failure_status,
             status=info_.emergency_status,
-            battery_charge=info_.battery_charge,
-            emergency_level=info_.emergency_level,
-            duration_test_result=info_.duration_test_result,
-            lamp_emergency_time=info_.lamp_emergency_time,
-            lamp_total_operation_time=info_.lamp_total_operation_time,
-            rated_duration=info_.rated_duration,
+            battery_charge=_response_value(info_.battery_charge),
+            emergency_level=_response_value(info_.emergency_level),
+            duration_test_result=_response_value(info_.duration_test_result),
+            lamp_emergency_time=_response_value(info_.lamp_emergency_time),
+            lamp_total_operation_time=_response_value(info_.lamp_total_operation_time),
+            rated_duration=_response_value(info_.rated_duration),
             control_gear_temperature=_memory_int(
                 memory.get(emergency.ControlGearTemperature)
             ),
@@ -949,7 +965,7 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
     async def _query_metadata(self, address: GearShort | DeviceShort) -> DaliDeviceData:
         """Read optional identification data from memory bank 0."""
         try:
-            values = await self.driver.send(info.BANK_0.read_all(address))
+            values = await run_sequence(self.driver, info.BANK_0.read_all(address))
         except DALISequenceError, MemoryLocationNotImplemented, ResponseError:
             return DaliDeviceData()
 
@@ -977,7 +993,7 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
         """
         values: dict[type[MemoryValue], Any]
         try:
-            values = await self.driver.send(bank.read_all(gear_address))
+            values = await run_sequence(self.driver, bank.read_all(gear_address))
         except DALISequenceError, MemoryLocationNotImplemented, ResponseError:
             return None
         return values
@@ -1789,8 +1805,10 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
 
     async def async_assign_control_device_short_addresses(self) -> bool:
         """Address unaddressed control devices; return whether any remain unaddressed."""
-        await self.driver.send(
-            CommissionDevices(readdress=False), progress=_log_commissioning_progress
+        await run_sequence(
+            self.driver,
+            CommissionDevices(readdress=False),
+            on_progress=_log_commissioning_progress,
         )
         # Newly addressed devices only surface as entities once re-enumerated into
         # the instance map; discovery is additive, so it folds them in.
@@ -1802,11 +1820,10 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
         return unaddressed
 
     def close(self) -> None:
-        """Close the serial transport."""
+        """Close the driver connection."""
         if self._event_task:
             self._event_task.cancel()
-        if transport := getattr(self.driver, "_transport", None):
-            transport.close()
+        self.driver.close()
 
     def device_data(
         self, address: int, *, input_device: bool = False
@@ -1883,7 +1900,11 @@ class DaliCoordinator(DataUpdateCoordinator[dict[int, DaliGearData]]):
             identifiers={(DOMAIN, entry_id)},
             name=self._interface_label(title),
             manufacturer="Lunatone",
-            model="USB-DALI2 interface",
+            model=(
+                "DALI-USB (HID) interface"
+                if self.config_entry.data.get(CONF_INTERFACE) == INTERFACE_HID
+                else "USB-DALI2 interface"
+            ),
         )
 
     def _interface_label(self, title: str) -> str:
