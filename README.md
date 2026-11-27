@@ -13,8 +13,9 @@ early testers, before it is available in Home Assistant core. It supports the
 Lunatone DALI2-USB serial dongle (USB `17B5:0201`) and the Tridonic/Lunatone
 DALI-USB (HID) interface (USB `17B5:0020`; see [DALI-USB (HID) interface](#dali-usb-hid-interface)).
 
-> This is a temporary channel. Once the integration ships in Home Assistant core,
-> install it from there and remove this custom repository.
+> This is a temporary channel. Work to integrate DALI into Home Assistant core is
+> under way; once it ships there, install it from core and remove this custom
+> repository.
 
 ## Requirements
 
@@ -26,20 +27,18 @@ DALI-USB (HID) interface (USB `17B5:0020`; see [DALI-USB (HID) interface](#dali-
 
 ## Install
 
-This integration is available in the Home Assistant Marketplace
-(**Settings > Marketplace**).
+This integration is **not** in the HACS default marketplace, so add it as a
+custom repository:
 
-1. In **Settings > Marketplace**, search for **Tridonic DALI**, install it, then
-   **restart Home Assistant**.
-2. Plug in the DALI-USB dongle. Go to **Settings → Devices & Services → Add
+1. In the Home Assistant Marketplace (**Settings > Marketplace**), open the
+   three-dot menu → **Custom repositories**, add this repository's URL with
+   category **Integration**, or use the button below:
+
+   [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tridonic-com&repository=ha-dali&category=integration)
+
+2. Search for **Tridonic DALI**, install it, then **restart Home Assistant**.
+3. Plug in the DALI-USB dongle. Go to **Settings → Devices & Services → Add
    Integration → Tridonic DALI** and follow the config flow.
-
-If it does not appear yet, add it as a custom repository as a fallback — in
-**Settings > Marketplace**, open the three-dot menu → **Custom repositories**,
-add this repository's URL with category **Integration** (or use the button
-below), then install as above:
-
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tridonic-com&repository=ha-dali&category=integration)
 
 On first setup Home Assistant installs the released
 [`python-dali`](https://pypi.org/project/python-dali/) dependency from PyPI via
